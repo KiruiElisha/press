@@ -124,6 +124,11 @@ def handlers():
 	as `error_key`.
 	"""
 	return [
+		# The kernel killed a step for memory. First, because the same build also
+		# matches the generic "bench build" and "yarn build" handlers below.
+		("exit code: 137", update_with_out_of_memory, None),
+		('Command failed with signal "SIGKILL"', update_with_out_of_memory, None),
+		("died with <Signals.SIGKILL: 9>", update_with_out_of_memory, None),
 		(
 			"App installation token could not be fetched",
 			update_with_app_not_fetchable,
@@ -1134,6 +1139,31 @@ def update_with_yarn_build_failed(
 		and not Frappe Cloud.</p>
 		"""
 
+	details["message"] = fmt(message)
+	details["traceback"] = None
+	return True
+
+
+def update_with_out_of_memory(
+	details: "Details",
+	dc: "DeployCandidate",
+	dcb: "DeployCandidateBuild",
+	exc: BaseException,
+):
+	failed_step = get_failed_step(dcb)
+	where = (
+		f" at <b>{escape_html(failed_step.stage)} - {escape_html(failed_step.step)}</b>"
+		if failed_step
+		else ""
+	)
+	details["title"] = "Build ran out of memory"
+	message = f"""
+	<p>The build server ran out of memory{where} and the step was stopped.
+	The app's code is not at fault.</p>
+
+	<p>Retry when the server is less busy, or give builds more memory:
+	more swap, a larger build server, or a build server of its own.</p>
+	"""
 	details["message"] = fmt(message)
 	details["traceback"] = None
 	return True

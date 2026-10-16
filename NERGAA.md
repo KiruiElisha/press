@@ -15,6 +15,10 @@ This fork runs Nergaa Cloud (https://cloud.nergaa.cloud). Branches:
    syntax error marks a release invalid. `compileall` wrote `__pycache__`, so a full build disk ("No space left
    on device") marked good releases invalid for good ("Invalid release found" on every later deploy).
 
+2. `press/press/doctype/deploy_candidate/deploy_notifications.py`: a build step the kernel killed for memory
+   (exit code 137, SIGKILL) is reported as "Build ran out of memory". It used to fall through to "App frontend
+   build failed… may be due to issues with the app", which blamed the app for a small build server.
+
 Fixes that still live as runtime patches in nergaa-cloud (`apps/nergaa_cloud/nergaa_cloud/press_fixes.py`) move
 here one by one; the patches check whether Press already has the fix, so both can run during the move.
 

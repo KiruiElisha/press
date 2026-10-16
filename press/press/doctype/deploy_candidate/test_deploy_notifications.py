@@ -186,3 +186,39 @@ class TestFrappeListedAsDependency(FrappeTestCase):
 		details = self.get_details(output)
 
 		self.assertNotIn("<img", details["message"])
+
+
+VITE_KILLED_OUTPUT = """
+Running build command for hrms
+$ yarn build-pwa && yarn build-roster
+vite v5.4.15 building for production...
+error Command failed with signal "SIGKILL".
+ERROR: failed to solve: process "/bin/sh -c bench get-app hrms" did not complete successfully: exit code: 137
+"""
+
+
+class TestOutOfMemory(FrappeTestCase):
+	def tearDown(self):
+		frappe.db.rollback()
+
+	def get_details(self, build_output: str):
+		return get_details(
+			deploy_candidate=frappe._dict(),
+			deploy_candidate_build=make_failed_build(build_output),
+			exc=Exception("Build failed"),
+		)
+
+	def test_killed_vite_build_says_out_of_memory_not_app_build_failure(self):
+		details = self.get_details(
+			VITE_KILLED_OUTPUT + "subprocess.CalledProcessError: Command 'bench build --app hrms'"
+		)
+
+		self.assertTrue(details["is_actionable"])
+		self.assertEqual(details["title"], "Build ran out of memory")
+		self.assertIn("ran out of memory at <b>Install Apps - my_app</b>", details["message"])
+		self.assertIn("not at fault", details["message"])
+
+	def test_step_killed_without_yarn_output_is_matched_by_exit_code_137(self):
+		details = self.get_details("did not complete successfully: exit code: 137")
+
+		self.assertEqual(details["title"], "Build ran out of memory")
