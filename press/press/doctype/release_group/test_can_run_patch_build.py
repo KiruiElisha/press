@@ -104,6 +104,12 @@ class TestCanRunPatchBuild(FrappeTestCase):
 		rg.db_set("public", 1)
 		self.assertFalse(can_run_patch_build(rg.name))
 
+	def test_public_group_allowed_when_patch_builds_on_public_benches_are_on(self):
+		rg, _ = _setup()
+		rg.db_set("public", 1)
+		frappe.db.set_single_value("Press Settings", "allow_patch_builds_on_public_benches", 1)
+		self.assertTrue(can_run_patch_build(rg.name))
+
 	def test_returns_false_when_dependency_version_changed(self):
 		rg, _ = _setup()
 		rg.dependencies[0].version = "99.99"
@@ -171,3 +177,25 @@ class TestCanRunPatchBuild(FrappeTestCase):
 		rg, bench = _setup()
 		_add_arm_build(rg, bench, create_bench=True)
 		self.assertTrue(can_run_patch_build(rg.name))
+
+
+class TestPatchBuildStoredAssets(FrappeTestCase):
+	def test_patch_instructions_carry_a_download_link_for_stored_assets(self):
+		from press.press.doctype.deploy_candidate_build import deploy_candidate_build as module
+
+		build = Mock(uses_asset_store=Mock(return_value=True))
+		apps = [{"app": "hrms", "url": "u", "hash": "a1"}, {"app": "crm", "url": "u", "hash": "b2"}]
+		stored = [{"app": "hrms", "hash": "a1", "download_url": "https://store/hrms.a1.tar.gz"}]
+		with patch.object(module, "get_asset_store_instructions", return_value=stored) as instructions:
+			module.DeployCandidateBuild._add_stored_asset_urls(build, apps)
+
+		self.assertEqual(apps[0]["assets_url"], "https://store/hrms.a1.tar.gz")
+		self.assertNotIn("assets_url", apps[1])  # not stored: the agent builds it
+		self.assertFalse(instructions.call_args.kwargs["can_upload"])
+
+	def test_patch_instructions_unchanged_without_an_asset_store(self):
+		from press.press.doctype.deploy_candidate_build import deploy_candidate_build as module
+
+		apps = [{"app": "hrms", "url": "u", "hash": "a1"}]
+		module.DeployCandidateBuild._add_stored_asset_urls(Mock(uses_asset_store=Mock(return_value=False)), apps)
+		self.assertEqual(apps, [{"app": "hrms", "url": "u", "hash": "a1"}])

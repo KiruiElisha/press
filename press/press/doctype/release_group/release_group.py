@@ -2440,7 +2440,9 @@ def can_run_patch_build(release_group: str) -> bool:
 	if not previous_candidate:
 		return False
 
-	if frappe.db.get_value("Release Group", release_group, "public"):
+	if frappe.db.get_value("Release Group", release_group, "public") and not frappe.db.get_single_value(
+		"Press Settings", "allow_patch_builds_on_public_benches"
+	):
 		return False
 
 	rg: ReleaseGroup = frappe.get_doc("Release Group", release_group)

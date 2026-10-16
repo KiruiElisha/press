@@ -19,6 +19,11 @@ This fork runs Nergaa Cloud (https://cloud.nergaa.cloud). Branches:
    (exit code 137, SIGKILL) is reported as "Build ran out of memory". It used to fall through to "App frontend
    build failed… may be due to issues with the app", which blamed the app for a small build server.
 
+3. Patch builds on public benches (Press Settings → Allow Patch Builds On Public Benches): a deploy where only
+   apps changed updates them in the last image instead of building a new one. Patch instructions carry a download
+   link for each app's built assets in the asset store (filled by the asset farm), so the agent can extract them
+   instead of running the app's frontend build.
+
 Fixes that still live as runtime patches in nergaa-cloud (`apps/nergaa_cloud/nergaa_cloud/press_fixes.py`) move
 here one by one; the patches check whether Press already has the fix, so both can run during the move.
 

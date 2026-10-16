@@ -117,6 +117,7 @@
 		"use_delta_builds",
 		"use_agent_job_callbacks",
 		"allow_patch_builds",
+		"allow_patch_builds_on_public_benches",
 		"auto_update_section",
 		"auto_update_queue_size",
 		"remote_files_section",
@@ -1867,6 +1868,14 @@
 			"label": "Allow Patch Builds"
 		},
 		{
+			"default": "0",
+			"depends_on": "allow_patch_builds",
+			"description": "Patch builds update only the apps that changed in the last image. Public benches upload their built assets to the asset store in full builds; a patch build extracts them from there instead of building.",
+			"fieldname": "allow_patch_builds_on_public_benches",
+			"fieldtype": "Check",
+			"label": "Allow Patch Builds On Public Benches"
+		},
+		{
 			"fieldname": "column_break_wqtc",
 			"fieldtype": "Column Break"
 		},
@@ -1903,7 +1912,7 @@
 	],
 	"issingle": 1,
 	"links": [],
-	"modified": "2026-09-11 13:26:41.047658",
+	"modified": "2026-10-16 19:13:04.859147",
 	"modified_by": "Administrator",
 	"module": "Press",
 	"name": "Press Settings",

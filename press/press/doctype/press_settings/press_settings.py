@@ -30,6 +30,7 @@ class PressSettings(Document):
 		agent_repository_owner: DF.Data | None
 		agent_sentry_dsn: DF.Data | None
 		allow_patch_builds: DF.Check
+		allow_patch_builds_on_public_benches: DF.Check
 		anthropic_api_key: DF.Password | None
 		app_include_script: DF.Data | None
 		asset_store_access_key: DF.Data | None

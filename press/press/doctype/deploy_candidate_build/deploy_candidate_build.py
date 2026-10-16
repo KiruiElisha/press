@@ -1086,14 +1086,23 @@ class DeployCandidateBuild(Document):
 			if app.release == previous_releases[app.app]:
 				continue
 			source: AppSource = frappe.get_doc("App Source", app.source)
-			apps.append(
-				{
-					"app": app.app,
-					"url": source.get_repo_url(),
-					"hash": frappe.db.get_value("App Release", app.release, "hash"),
-				}
-			)
+			app_hash = frappe.db.get_value("App Release", app.release, "hash")
+			apps.append({"app": app.app, "url": source.get_repo_url(), "hash": app_hash})
+		self._add_stored_asset_urls(apps)
 		return apps
+
+	def _add_stored_asset_urls(self, apps: list[dict]) -> None:
+		"""A download link for each app's built assets in the store, so the patch build extracts them
+		instead of running the app's frontend build on the build server."""
+		if not self.uses_asset_store():
+			return
+		stored = get_asset_store_instructions(
+			[frappe._dict(app=app["app"], hash=app["hash"], use_cached=True) for app in apps], can_upload=False
+		)
+		urls = {item["app"]: item["download_url"] for item in stored if item.get("download_url")}
+		for app in apps:
+			if app["app"] in urls:
+				app["assets_url"] = urls[app["app"]]
 
 	@staticmethod
 	def process_run_patch_build(job: "AgentJob", response_data: "dict | None"):
