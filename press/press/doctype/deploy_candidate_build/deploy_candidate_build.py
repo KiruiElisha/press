@@ -1097,7 +1097,8 @@ class DeployCandidateBuild(Document):
 		if not self.uses_asset_store():
 			return
 		stored = get_asset_store_instructions(
-			[frappe._dict(app=app["app"], hash=app["hash"], use_cached=True) for app in apps], can_upload=False
+			[frappe._dict(app=app["app"], hash=app["hash"], use_cached=True) for app in apps],
+			can_upload=False,
 		)
 		urls = {item["app"]: item["download_url"] for item in stored if item.get("download_url")}
 		for app in apps:

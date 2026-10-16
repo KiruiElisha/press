@@ -197,5 +197,7 @@ class TestPatchBuildStoredAssets(FrappeTestCase):
 		from press.press.doctype.deploy_candidate_build import deploy_candidate_build as module
 
 		apps = [{"app": "hrms", "url": "u", "hash": "a1"}]
-		module.DeployCandidateBuild._add_stored_asset_urls(Mock(uses_asset_store=Mock(return_value=False)), apps)
+		module.DeployCandidateBuild._add_stored_asset_urls(
+			Mock(uses_asset_store=Mock(return_value=False)), apps
+		)
 		self.assertEqual(apps, [{"app": "hrms", "url": "u", "hash": "a1"}])
