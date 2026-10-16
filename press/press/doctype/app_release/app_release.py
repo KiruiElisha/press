@@ -651,31 +651,54 @@ def _get_python_path() -> str:
 	return _python_path
 
 
+# Compiles every .py file in memory with the app's own Python and prints the ones that don't compile.
+_SYNTAX_SCRIPT = r"""
+import os, sys
+bad = []
+for root, dirs, files in os.walk(sys.argv[1]):
+    dirs[:] = [d for d in dirs if d not in (".git", "node_modules", "__pycache__")]
+    for name in files:
+        if name.endswith(".py"):
+            path = os.path.join(root, name)
+            with open(path, "rb") as f:
+                source = f.read()
+            try:
+                compile(source, path, "exec", dont_inherit=True)
+            except (SyntaxError, ValueError) as e:
+                bad.append("*** Error compiling %r...\n%s: %s" % (path, type(e).__name__, e))
+print("\n".join(bad))
+sys.exit(1 if bad else 0)
+"""
+
+
 def check_python_syntax(dirpath: str) -> str:
 	"""
-	Script `compileall` will compile all the Python files
-	in the given directory.
+	Returns the syntax errors in the Python files under `dirpath`, or "".
 
-	If there are errors then return code will be non-zero.
-
-	Flags:
-	- -q: quiet, only print errors (stdout)
-	- -o: optimize level, 0 is no optimization
+	Files are compiled in memory (nothing is written: `compileall` wrote __pycache__ next to every
+	file, so a full disk failed the check with "No space left on device" and marked a good release
+	invalid for good). Only code that doesn't compile counts; a check that can't run at all (disk,
+	memory, a missing Python) is logged and doesn't judge the code.
 	"""
-	_python = get_python_path(dirpath)
-	command = f"{_python} -m compileall -q -o 0 {dirpath}"
-	proc = subprocess.run(
-		shlex.split(command),
-		text=True,
-		capture_output=True,
-	)
+	try:
+		proc = subprocess.run(
+			[get_python_path(dirpath), "-c", _SYNTAX_SCRIPT, dirpath],
+			text=True,
+			capture_output=True,
+			timeout=600,
+		)
+	except (OSError, subprocess.SubprocessError) as e:
+		log_error("App Release Syntax Check Failed", dirpath=dirpath, error=str(e))
+		return ""
+
 	if proc.returncode == 0:
 		return ""
 
-	if not proc.stdout:
-		return proc.stderr
+	if "*** Error compiling" in proc.stdout:
+		return proc.stdout
 
-	return proc.stdout
+	log_error("App Release Syntax Check Failed", dirpath=dirpath, stderr=proc.stderr[-3000:])
+	return ""
 
 
 def check_pyproject_syntax(dirpath: str) -> str:
