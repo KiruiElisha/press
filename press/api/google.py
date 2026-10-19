@@ -3,10 +3,11 @@
 
 from __future__ import annotations
 
+import time
+
 import frappe
 from frappe import _
-from google.auth.transport.requests import Request
-from google.oauth2 import id_token
+from google.auth import jwt
 from google_auth_oauthlib.flow import Flow
 from oauthlib.oauth2 import AccessDeniedError
 
@@ -57,14 +58,7 @@ def callback(code: str | None = None, state: str | None = None):  # noqa: C901
 	# authenticated
 	frappe.cache().delete_value(cached_key)
 
-	# id_info
-	token_request = Request()
-	google_credentials = get_google_credentials()
-	id_info = id_token.verify_oauth2_token(
-		id_token=flow.credentials._id_token,
-		request=token_request,
-		audience=google_credentials["web"]["client_id"],
-	)
+	id_info = id_token_claims(flow.credentials.id_token, get_google_credentials()["web"]["client_id"])
 
 	email = id_info.get("email")
 
@@ -126,6 +120,22 @@ def callback(code: str | None = None, state: str | None = None):  # noqa: C901
 		frappe.local.response.type = "redirect"
 		frappe.local.response.location = account_request.get_verification_url()
 	return None
+
+
+GOOGLE_ISSUERS = ("accounts.google.com", "https://accounts.google.com")
+
+
+def id_token_claims(token: str, client_id: str) -> dict:
+	"""Claims of an ID token that came straight from Google's token endpoint over TLS. OpenID Connect Core 3.1.3.7
+	lets such a token skip the signature check, so a host that cannot fetch Google's certificates can still sign in."""
+	claims = jwt.decode(token, verify=False)
+	if claims.get("aud") != client_id or claims.get("iss") not in GOOGLE_ISSUERS:
+		frappe.throw(_("Google returned a sign-in token meant for another application."))
+	if claims.get("exp", 0) < time.time():
+		frappe.throw(_("The Google sign-in expired. Please try again."))
+	if not claims.get("email_verified"):
+		frappe.throw(_("Your Google account's email address is not verified."))
+	return claims
 
 
 def invalid_login():
