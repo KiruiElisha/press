@@ -24,6 +24,12 @@ This fork runs Nergaa Cloud (https://cloud.nergaa.cloud). Branches:
    link for each app's built assets in the asset store (filled by the asset farm), so the agent can extract them
    instead of running the app's frontend build.
 
+4. `press/press/doctype/app/app.py` — `get_app_source_from_supported_versions` tries an app's sources from the
+   highest Frappe version down. With Nightly numbered 17 (Frappe's fix), a dependency with no Nightly source fell
+   through to "any matching source" in database order, so a Version 15 source could win over Version 16.
+   `test_app.py`'s expectations follow the new Nightly number (it no longer matches 15.x ranges). Drop both once
+   Frappe makes the same fixes.
+
 Fixes that still live as runtime patches in nergaa-cloud (`apps/nergaa_cloud/nergaa_cloud/press_fixes.py`) move
 here one by one; the patches check whether Press already has the fix, so both can run during the move.
 

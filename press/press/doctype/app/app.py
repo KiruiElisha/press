@@ -316,15 +316,14 @@ def get_app_source_from_supported_versions(
 	for field, value in (filters or {}).items():
 		base_query = base_query.where(app_source[field] == value)
 
-	highest_priority_query = base_query.where(app_source_version.version == version_numbers[0]["name"])
-	highest_priority_app_source = highest_priority_query.run(pluck=True)
+	# Highest version first, then the next one down: a source for Version 16 beats one for Version 15
+	# when nothing supports Nightly (the highest number), rather than whichever the database returns first.
+	for version in version_numbers:
+		matching = base_query.where(app_source_version.version == version["name"]).run(pluck=True)
+		if matching:
+			return frappe.get_doc("App Source", matching[0])
 
-	if highest_priority_app_source:
-		return frappe.get_doc("App Source", highest_priority_app_source[0])
-
-	any_matching_app_source = base_query.where(app_source_version.version.isin(supported_versions))
-	any_matching_app_source = any_matching_app_source.run(pluck=True)
-	return frappe.get_doc("App Source", any_matching_app_source[0]) if any_matching_app_source else None
+	return None
 
 
 def get_latest_release_of_app_from_source(app_source: AppSource) -> AppRelease | None:
