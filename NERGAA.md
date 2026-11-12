@@ -24,6 +24,11 @@ This fork runs Nergaa Cloud (https://cloud.nergaa.cloud). Branches:
    link for each app's built assets in the asset store (filled by the asset farm), so the agent can extract them
    instead of running the app's frontend build.
 
+4. `press/press/doctype/deploy_candidate_build/test_deploy_candidate_build.py` —
+   `test_public_group_with_app_cache_installs_apps_through_the_asset_store` expects the Dockerfile's current
+   `COPY get_cached_app.py run_hooks.py* /usr/local/bin`. Frappe changed that line (b93ea65df, 3a3250e14) without
+   updating the test, so it fails on Frappe's master as well. Drop this once Frappe updates the test.
+
 Fixes that still live as runtime patches in nergaa-cloud (`apps/nergaa_cloud/nergaa_cloud/press_fixes.py`) move
 here one by one; the patches check whether Press already has the fix, so both can run during the move.
 
