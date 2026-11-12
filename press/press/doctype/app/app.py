@@ -289,9 +289,7 @@ def parse_frappe_version(
 def get_app_source_from_supported_versions(
 	app: str, supported_versions: set[str], filters: dict[str, str] | None = None
 ) -> AppSource | None:
-	"""From the provided versions fetch the app source which supports the latest version.
-	In case no app supports the latest version the just get whatever app source supports any of the provided versions.
-	"""
+	"""From the provided versions, fetch the app source that supports the highest version."""
 	version_numbers = frappe.get_all(
 		"Frappe Version", {"name": ("in", supported_versions)}, ["name", "number"]
 	)
@@ -316,12 +314,9 @@ def get_app_source_from_supported_versions(
 	for field, value in (filters or {}).items():
 		base_query = base_query.where(app_source[field] == value)
 
-	# Highest version first, then the next one down: a source for Version 16 beats one for Version 15
-	# when nothing supports Nightly (the highest number), rather than whichever the database returns first.
 	for version in version_numbers:
-		matching = base_query.where(app_source_version.version == version["name"]).run(pluck=True)
-		if matching:
-			return frappe.get_doc("App Source", matching[0])
+		if app_source_name := base_query.where(app_source_version.version == version["name"]).run(pluck=True):
+			return frappe.get_doc("App Source", app_source_name[0])
 
 	return None
 
