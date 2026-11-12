@@ -74,7 +74,9 @@ def obtain_access_token(code, team):
 		response = requests.post(
 			"https://github.com/login/oauth/access_token", data=data, headers=headers
 		).json()
-		frappe.db.set_value("Team", team, "github_access_token", response["access_token"])
+		from press.api.github import save_team_github_token
+
+		save_team_github_token(team, response)
 	except Exception:
 		log_error("Access Token Error", team=team, response=summarize_github_token_response(response))
 

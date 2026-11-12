@@ -179,17 +179,80 @@ def clear_token_and_get_installation_url(redirect_url: str | None = None):
 def clear_current_team_access_token(team: str | None = None):
 	team = team or get_current_team()
 	frappe.db.set_value("Team", team, "github_access_token", "")  # clear access token
+	delete_team_refresh_token(team)
+
+
+# GitHub App user tokens expire after 8 hours (the app's default), and GitHub sends a refresh token
+# with them that lasts 6 months. Press kept only the access token, so 8 hours after connecting GitHub
+# every team was asked to re-authorize. The refresh token is kept encrypted in __Auth (no Team column)
+# and used to renew the access token when GitHub refuses it.
+GITHUB_REFRESH_TOKEN_FIELD = "github_refresh_token"
+
+
+class GitHubBadCredentials(frappe.ValidationError):
+	"""GitHub refused the team's user token (HTTP 401)."""
+
+
+def save_team_github_token(team: str, response: dict) -> None:
+	"""Store the user token GitHub returned, and its refresh token when there is one."""
+	from frappe.utils.password import set_encrypted_password
+
+	frappe.db.set_value("Team", team, "github_access_token", response["access_token"])
+	if response.get("refresh_token"):
+		set_encrypted_password("Team", team, response["refresh_token"], GITHUB_REFRESH_TOKEN_FIELD)
+
+
+def delete_team_refresh_token(team: str) -> None:
+	from frappe.utils.password import remove_encrypted_password
+
+	remove_encrypted_password("Team", team, GITHUB_REFRESH_TOKEN_FIELD)
+
+
+def refresh_team_github_token(team: str) -> str | None:
+	"""A new user token from the stored refresh token, or None (none stored, expired or revoked)."""
+	from frappe.utils.password import get_decrypted_password
+
+	refresh_token = get_decrypted_password("Team", team, GITHUB_REFRESH_TOKEN_FIELD, raise_exception=False)
+	if not refresh_token:
+		return None
+	data = {
+		"client_id": frappe.db.get_single_value("Press Settings", "github_app_client_id"),
+		"client_secret": frappe.db.get_single_value("Press Settings", "github_app_client_secret"),
+		"grant_type": "refresh_token",
+		"refresh_token": refresh_token,
+	}
+	try:
+		response = requests.post(
+			"https://github.com/login/oauth/access_token",
+			data=data,
+			headers={"Accept": "application/json"},
+			timeout=15,
+		).json()
+	except Exception:
+		return None
+	if not response.get("access_token"):
+		# expired or revoked: the next authorization stores a fresh one
+		delete_team_refresh_token(team)
+		return None
+	save_team_github_token(team, response)  # GitHub rotates the refresh token too
+	return response["access_token"]
 
 
 @frappe.whitelist()
 def options():
 	team = get_current_team()
 	token = frappe.db.get_value("Team", team, "github_access_token")
-
-	return {
-		"authorized": bool(token),
-		"installations": installations(token) if token else [],
-	}
+	if not token:
+		return {"authorized": False, "installations": []}
+	try:
+		found = installations(token)
+	except GitHubBadCredentials:
+		token = refresh_team_github_token(team)
+		if not token:
+			# what the dashboard reads as "re-authorize"
+			frappe.throw("Error fetching installations from GitHub: Bad credentials")
+		found = installations(token)
+	return {"authorized": True, "installations": found}
 
 
 def get_safe_github_redirect_url(redirect_url: str | None = None) -> str:
@@ -269,6 +332,8 @@ def fetch_installations(token):
 			headers=headers,
 		)
 		data = response.json()
+		if response.status_code == 401:
+			raise GitHubBadCredentials(data.get("message", "Bad credentials"))
 		if not response.ok:
 			frappe.throw("Error fetching installations from GitHub: " + data.get("message", "Unknown error"))
 		if len(data.get("installations", [])) < 100:

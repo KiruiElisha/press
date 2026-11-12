@@ -29,6 +29,12 @@ This fork runs Nergaa Cloud (https://cloud.nergaa.cloud). Branches:
    `COPY get_cached_app.py run_hooks.py* /usr/local/bin`. Frappe changed that line (b93ea65df, 3a3250e14) without
    updating the test, so it fails on Frappe's master as well. Drop this once Frappe updates the test.
 
+5. `press/api/github.py`, `press/www/github/authorize.py` — GitHub App user tokens expire after 8 hours,
+   and Press kept only the access token, so every 8 hours the dashboard asked to re-authorize GitHub.
+   The refresh token GitHub sends with it is now kept (encrypted in `__Auth`, no Team column), and a
+   refused token is renewed with it before falling back to "Re-authorize". Drop once Frappe keeps refresh
+   tokens.
+
 Fixes that still live as runtime patches in nergaa-cloud (`apps/nergaa_cloud/nergaa_cloud/press_fixes.py`) move
 here one by one; the patches check whether Press already has the fix, so both can run during the move.
 

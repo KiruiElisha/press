@@ -114,6 +114,81 @@ class TestGitHubAuthorization(FrappeTestCase):
 
 		self.assertEqual(data, {"authorized": False, "installations": []})
 
+	def test_an_expired_github_token_is_renewed_instead_of_asking_to_reauthorize(self):
+		from frappe.utils.password import get_decrypted_password, set_encrypted_password
+
+		from press.api.github import GITHUB_REFRESH_TOKEN_FIELD, options
+
+		frappe.db.set_value("Team", self.team.name, "github_access_token", "expired-token")
+		set_encrypted_password("Team", self.team.name, "refresh-1", GITHUB_REFRESH_TOKEN_FIELD)
+
+		def get(url, params=None, headers=None):
+			ok = headers["Authorization"] == "token fresh-token"
+			r = Mock(ok=ok, status_code=200 if ok else 401)
+			r.json.return_value = {"installations": []} if ok else {"message": "Bad credentials"}
+			return r
+
+		with (
+			patch("press.api.github.get_current_team", return_value=self.team.name),
+			patch("press.api.github.requests.get", side_effect=get),
+			patch("press.api.github.requests.post") as post,
+		):
+			post.return_value.json.return_value = {
+				"access_token": "fresh-token",
+				"refresh_token": "refresh-2",
+			}
+			data = options()
+
+		self.assertEqual(data, {"authorized": True, "installations": []})
+		self.assertEqual(post.call_args.kwargs["data"]["grant_type"], "refresh_token")
+		self.assertEqual(post.call_args.kwargs["data"]["refresh_token"], "refresh-1")
+		self.assertEqual(frappe.db.get_value("Team", self.team.name, "github_access_token"), "fresh-token")
+		# GitHub rotates refresh tokens: the new one is kept
+		self.assertEqual(
+			get_decrypted_password("Team", self.team.name, GITHUB_REFRESH_TOKEN_FIELD, raise_exception=False),
+			"refresh-2",
+		)
+
+	def test_a_token_that_cannot_be_renewed_still_asks_to_reauthorize(self):
+		from press.api.github import options
+
+		frappe.db.set_value("Team", self.team.name, "github_access_token", "expired-token")
+		bad = Mock(ok=False, status_code=401)
+		bad.json.return_value = {"message": "Bad credentials"}
+		with (
+			patch("press.api.github.get_current_team", return_value=self.team.name),
+			patch("press.api.github.requests.get", return_value=bad),
+			patch("press.api.github.requests.post") as post,
+			self.assertRaisesRegex(frappe.ValidationError, "Bad credentials"),
+		):
+			options()
+		post.assert_not_called()  # nothing stored to renew with
+
+	def test_obtain_access_token_keeps_the_refresh_token(self):
+		from frappe.utils.password import get_decrypted_password
+
+		from press.api.github import GITHUB_REFRESH_TOKEN_FIELD
+
+		with (
+			patch("press.www.github.authorize.requests.post") as post,
+			patch(
+				"press.www.github.authorize.frappe.db.get_single_value",
+				side_effect=["client-id", "client-secret"],
+			),
+		):
+			post.return_value.json.return_value = {
+				"access_token": "user-token",
+				"refresh_token": "refresh-token",
+				"expires_in": 28800,
+			}
+			self._obtain_access_token()("oauth-code", self.team.name)
+
+		self.assertEqual(frappe.db.get_value("Team", self.team.name, "github_access_token"), "user-token")
+		self.assertEqual(
+			get_decrypted_password("Team", self.team.name, GITHUB_REFRESH_TOKEN_FIELD, raise_exception=False),
+			"refresh-token",
+		)
+
 	def test_get_context_redirects_guest_to_login_with_callback(self):
 		state = self._encode_github_oauth_state(self.team.name, "/dashboard/sites")
 		frappe.set_user("Guest")
