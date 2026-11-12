@@ -250,7 +250,10 @@ def options():
 		token = refresh_team_github_token(team)
 		if not token:
 			# what the dashboard reads as "re-authorize"
-			frappe.throw("Error fetching installations from GitHub: Bad credentials")
+			frappe.throw(
+				"GitHub no longer accepts this team's sign-in (Bad credentials). "
+				"Authorize GitHub again to continue."
+			)
 		found = installations(token)
 	return {"authorized": True, "installations": found}
 
