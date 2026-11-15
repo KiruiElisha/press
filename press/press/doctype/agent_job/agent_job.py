@@ -1467,7 +1467,7 @@ def cancel_job_from_dashboard(name: str):
 		frappe.throw("Job name must be a string", frappe.ValidationError)
 
 	job: AgentJob = frappe.get_doc("Agent Job", name)
-	if not has_support_access("Site", job.site):
+	if not has_support_access("Site", job.site or ""):
 		is_owned_by_team("Site", job.site, raise_exception=True)
 
 	job.validate_dashboard_cancellation()

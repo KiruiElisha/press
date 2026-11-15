@@ -35,6 +35,11 @@ This fork runs Nergaa Cloud (https://cloud.nergaa.cloud). Branches:
    refused token is renewed with it before falling back to "Re-authorize". Drop once Frappe keeps refresh
    tokens.
 
+6. `press/press/doctype/agent_job/agent_job.py` — `cancel_job_from_dashboard` passes `job.site or ""` to
+   `has_support_access`, which takes a `str`. mypy (follow_imports = skip) only sees that signature when both
+   files change in one PR, and a sync does, so "Format & Type Check" failed. The empty name takes the same path
+   as `None`. Drop once Frappe types it.
+
 Fixes that still live as runtime patches in nergaa-cloud (`apps/nergaa_cloud/nergaa_cloud/press_fixes.py`) move
 here one by one; the patches check whether Press already has the fix, so both can run during the move.
 
