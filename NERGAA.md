@@ -40,6 +40,12 @@ This fork runs Nergaa Cloud (https://cloud.nergaa.cloud). Branches:
    files change in one PR, and a sync does, so "Format & Type Check" failed. The empty name takes the same path
    as `None`. Drop once Frappe types it.
 
+7. `press/press/doctype/release_group/release_group.py` — Frappe's master backport db18bdfc0 ("Show public groups
+   to system users in the list") was committed with conflict markers in `get_list_query`, so the module does not
+   import on Frappe's master. Resolved as the original develop commit (80f288f) means it: the `public == 0` filter
+   applies only to non-system users (the block below it), and develop's `outside_archived_clusters()` is left out
+   because master doesn't have it. Drop once Frappe fixes master.
+
 Fixes that still live as runtime patches in nergaa-cloud (`apps/nergaa_cloud/nergaa_cloud/press_fixes.py`) move
 here one by one; the patches check whether Press already has the fix, so both can run during the move.
 
