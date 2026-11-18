@@ -24,18 +24,13 @@ This fork runs Nergaa Cloud (https://cloud.nergaa.cloud). Branches:
    link for each app's built assets in the asset store (filled by the asset farm), so the agent can extract them
    instead of running the app's frontend build.
 
-4. `press/press/doctype/deploy_candidate_build/test_deploy_candidate_build.py` —
-   `test_public_group_with_app_cache_installs_apps_through_the_asset_store` expects the Dockerfile's current
-   `COPY get_cached_app.py run_hooks.py* /usr/local/bin`. Frappe changed that line (b93ea65df, 3a3250e14) without
-   updating the test, so it fails on Frappe's master as well. Drop this once Frappe updates the test.
-
-5. `press/api/github.py`, `press/www/github/authorize.py` — GitHub App user tokens expire after 8 hours,
+4. `press/api/github.py`, `press/www/github/authorize.py` — GitHub App user tokens expire after 8 hours,
    and Press kept only the access token, so every 8 hours the dashboard asked to re-authorize GitHub.
    The refresh token GitHub sends with it is now kept (encrypted in `__Auth`, no Team column), and a
    refused token is renewed with it before falling back to "Re-authorize". Drop once Frappe keeps refresh
    tokens.
 
-6. `press/press/doctype/agent_job/agent_job.py` — `cancel_job_from_dashboard` passes `job.site or ""` to
+5. `press/press/doctype/agent_job/agent_job.py` — `cancel_job_from_dashboard` passes `job.site or ""` to
    `has_support_access`, which takes a `str`. mypy (follow_imports = skip) only sees that signature when both
    files change in one PR, and a sync does, so "Format & Type Check" failed. The empty name takes the same path
    as `None`. Drop once Frappe types it.
