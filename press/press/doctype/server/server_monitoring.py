@@ -38,6 +38,14 @@ STUCK_AGENT_JOBS_ALERT_THRESHOLD = 15
 STUCK_AGENT_JOBS_WINDOW_HOURS = 24
 # Skip young jobs, so a deploy's burst of queued site jobs doesn't count
 STUCK_AGENT_JOBS_MINIMUM_AGE_MINUTES = 30
+# A public server has room for more sites while it keeps this much memory, CPU and disk free.
+# The disk line sits below the alert threshold: a site that lands here brings its data with it.
+FREE_MEMORY_RATIO_FOR_NEW_SITES = 0.2
+IDLE_CPU_RATIO_FOR_NEW_SITES = 0.5
+DISK_USED_RATIO_FOR_NEW_SITES = 0.85
+SERVER_DISK_USED_ALERT_THRESHOLD = 0.9
+# Older failures are history: the group has been rebuilt or left alone on purpose since
+PUBLIC_GROUP_BUILD_FAILURE_WINDOW_DAYS = 7
 
 
 class PublicServerHealthMetrics(TypedDict):
@@ -62,6 +70,21 @@ class ServerStuckAgentJobs(TypedDict):
 	undelivered: int
 	pending: int
 	halted: bool
+
+
+class ServerCapacity(TypedDict):
+	name: str
+	free_memory_percent: float
+	idle_cpu_percent: float
+	free_disk_percent: float
+
+
+class FailedPublicGroupBuild(TypedDict):
+	group: str
+	title: str
+	build: str
+	error_key: str | None
+	failed_step: str | None
 
 
 class SignupFailureRate(TypedDict):
@@ -156,7 +179,8 @@ def _get_public_server_pool_decision(
 		healthy_servers = [
 			server
 			for server in candidates
-			if ram_available_ratio[server] >= 0.2 and cpu_idle_ratio[server] >= 0.5
+			if ram_available_ratio[server] >= FREE_MEMORY_RATIO_FOR_NEW_SITES
+			and cpu_idle_ratio[server] >= IDLE_CPU_RATIO_FOR_NEW_SITES
 		]
 		decision["servers_with_decision"].update(cluster_servers)
 
@@ -225,7 +249,7 @@ def _get_public_server_alert_issues(server: str, metrics: PublicServerHealthMetr
 		issues.append(f"RAM utilization: {(1 - ram_available_ratio) * 100:.2f}%")
 	if cpu_idle_ratio is not None and 1 - cpu_idle_ratio > 0.5:
 		issues.append(f"CPU utilization: {(1 - cpu_idle_ratio) * 100:.2f}%")
-	if disk_used_ratio > 0.9:
+	if disk_used_ratio > SERVER_DISK_USED_ALERT_THRESHOLD:
 		issues.append(f"Disk utilization: {disk_used_ratio * 100:.2f}%")
 	if oom_kills > OOM_KILLS_ALERT_THRESHOLD:
 		issues.append(f"OOM kills: {max(1, round(oom_kills))}")
@@ -269,6 +293,35 @@ def _get_least_bad_pool_score(
 		metrics["available_memory_ratio"].get(server, 0.0),
 		metrics["available_memory_bytes"].get(server, 0.0),
 	)
+
+
+def get_public_servers_with_free_capacity(server_names: list[str]) -> list[ServerCapacity]:
+	"""Servers that have room for another site, the one with the most room first."""
+	metrics = _get_public_server_health_metrics(server_names)
+	if not metrics:
+		frappe.throw("Server capacity is unavailable right now. Please try again in a few minutes.")
+		return []
+
+	servers = [server for server in server_names if _has_free_capacity_for_sites(server, metrics)]
+	servers.sort(key=lambda server: _get_site_pool_score(server, metrics), reverse=True)
+	return [_get_server_capacity(server, metrics) for server in servers]
+
+
+def _has_free_capacity_for_sites(server: str, metrics: PublicServerHealthMetrics) -> bool:
+	return (
+		metrics["available_memory_ratio"].get(server, 0.0) >= FREE_MEMORY_RATIO_FOR_NEW_SITES
+		and metrics["cpu_idle_ratio"].get(server, 0.0) >= IDLE_CPU_RATIO_FOR_NEW_SITES
+		and metrics["disk_used_ratio"].get(server, 0.0) < DISK_USED_RATIO_FOR_NEW_SITES
+	)
+
+
+def _get_server_capacity(server: str, metrics: PublicServerHealthMetrics) -> ServerCapacity:
+	return {
+		"name": server,
+		"free_memory_percent": round(metrics["available_memory_ratio"].get(server, 0.0) * 100, 1),
+		"idle_cpu_percent": round(metrics["cpu_idle_ratio"].get(server, 0.0) * 100, 1),
+		"free_disk_percent": round((1 - metrics["disk_used_ratio"].get(server, 0.0)) * 100, 1),
+	}
 
 
 def _apply_public_server_pool_decision(
@@ -790,3 +843,96 @@ def _describe_server_with_stuck_agent_jobs(row: ServerStuckAgentJobs) -> str:
 		f"| [{row['server']}]({link}) | {row['server_type']} | {row['undelivered']} "
 		f"| {row['pending']} | {halted} |"
 	)
+
+
+def alert_on_failed_public_group_builds() -> None:
+	"""Alert once for each public bench group whose latest build failed.
+
+	A failed build only notifies the group's team on the dashboard, and for public groups
+	that team is us, so a broken signup or shared bench group can sit unnoticed for days.
+	"""
+	builds = [
+		build for build in _get_failed_public_group_builds() if not _was_build_failure_alerted(build["build"])
+	]
+	if not builds:
+		return
+
+	_send_failed_public_group_builds_alert(builds)
+	for build in builds:
+		_mark_build_failure_alerted(build["build"])
+
+
+def _get_failed_public_group_builds() -> list[FailedPublicGroupBuild]:
+	failed: list[FailedPublicGroupBuild] = []
+	for group in frappe.get_all(
+		"Release Group", filters={"public": 1, "enabled": 1}, fields=["name", "title"]
+	):
+		build = _get_latest_build_of_group(group.name)
+		if build and build.status == "Failure":
+			failed.append(
+				{
+					"group": group.name,
+					"title": group.title,
+					"build": build.name,
+					"error_key": build.error_key,
+					"failed_step": _get_failed_build_step(build.name),
+				}
+			)
+	return failed
+
+
+def _get_latest_build_of_group(group: str) -> frappe._dict | None:
+	# A retry is a newer build, so a failure that is being retried is not the latest
+	window_start = frappe.utils.add_days(None, -PUBLIC_GROUP_BUILD_FAILURE_WINDOW_DAYS)
+	builds = frappe.get_all(
+		"Deploy Candidate Build",
+		filters={"group": group, "creation": (">", window_start)},
+		fields=["name", "status", "error_key"],
+		order_by="creation desc",
+		limit=1,
+	)
+	return builds[0] if builds else None
+
+
+def _get_failed_build_step(build: str) -> str | None:
+	steps = frappe.get_all(
+		"Deploy Candidate Build Step",
+		filters={"parenttype": "Deploy Candidate Build", "parent": build, "status": "Failure"},
+		fields=["stage", "step"],
+		order_by="idx asc",
+		limit=1,
+	)
+	return f"{steps[0].stage} / {steps[0].step}" if steps else None
+
+
+def _build_failure_alert_cache_key(build: str) -> str:
+	return f"public_group_build_failure_alerted:{build}"
+
+
+def _was_build_failure_alerted(build: str) -> bool:
+	return bool(frappe.cache.get_value(_build_failure_alert_cache_key(build)))
+
+
+def _mark_build_failure_alerted(build: str) -> None:
+	expires_in_sec = PUBLIC_GROUP_BUILD_FAILURE_WINDOW_DAYS * 24 * 60 * 60
+	frappe.cache.set_value(_build_failure_alert_cache_key(build), True, expires_in_sec=expires_in_sec)
+
+
+def _send_failed_public_group_builds_alert(builds: list[FailedPublicGroupBuild]) -> None:
+	lines = [
+		f"**Public Bench Group Builds Failed** - {len(builds)}",
+		"",
+		"| Bench Group | Build | Error | Failed Step |",
+		"| --- | --- | --- | --- |",
+	]
+	lines.extend(_describe_failed_public_group_build(build) for build in builds)
+	send_raven_message("\n".join(lines), RAVEN_SERVER_ALERTS_CHANNEL)
+
+
+def _describe_failed_public_group_build(build: FailedPublicGroupBuild) -> str:
+	group_link = frappe.utils.get_url_to_form("Release Group", build["group"])
+	build_link = frappe.utils.get_url_to_form("Deploy Candidate Build", build["build"])
+	title = _escape_markdown_table_cell(build["title"] or build["group"])
+	error = _escape_markdown_table_cell(build["error_key"] or "-")
+	step = _escape_markdown_table_cell(build["failed_step"] or "-")
+	return f"| [{title}]({group_link}) | [{build['build']}]({build_link}) | {error} | {step} |"
