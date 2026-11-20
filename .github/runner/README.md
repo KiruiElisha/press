@@ -8,7 +8,9 @@ Each runner is a Docker container. The container also runs its own Docker daemon
 
 The image is `ghcr.io/actions/actions-runner` (Ubuntu 24.04), plus the tools that the jobs need and that GitHub's `ubuntu-24.04` image has. The `Dockerfile` lists these tools.
 
-GitHub-hosted runners give each job a new VM. Here, a container runs many jobs. Before each job, `cleanup.sh` removes the containers, `~/frappe-bench` and `/data` that the previous job left.
+GitHub-hosted runners give each job a new VM. Here, a container runs many jobs. Before each job, `cleanup.sh` stops the processes and removes the containers, `~/frappe-bench` and `/data` that the previous job left.
+
+Self-hosted jobs do not use GitHub's cache. All runners on the VM share the pip and yarn caches in `/opt/runner-cache/pip` and `/opt/runner-cache/yarn`. The Install step of Setup Bench holds a file lock (`flock /cache/yarn/.lock`), so two installs do not write the yarn cache at the same time. Do not use yarn's own `--mutex`: the press postinstall runs yarn inside yarn, and the inner yarn waits forever for its parent's lock. Setup Bench copies the bench and the MariaDB data to `/opt/runner-cache/runs/<run id>` on the VM, and the Client and Server jobs copy them from there. `cleanup.sh` removes runs older than one day. Each run uses some GB of disk. This works only while all runners are on one VM.
 
 The repository variable `SELF_HOSTED_RUNNERS` selects the runners for every workflow in `.github/workflows/`:
 
@@ -23,6 +25,8 @@ GitHub does not move a job to a GitHub-hosted runner when no self-hosted runner 
 | `runner.sh` | The entrypoint: starts dockerd, registers the runner on the first start, then runs it |
 | `cleanup.sh` | The job-started hook |
 | `compose.yaml` | Starts N runners on one VM |
+| `prune.sh` | Weekly cron job: stops the runners, removes unused Docker data and saved runs, then starts the runners. Clears the pip and yarn caches on the first Sunday of each month |
+| `rolling.sh` | Runs on your computer: replaces the runners with containers of a new image, one idle runner at a time |
 
 ## Requirements
 
@@ -79,37 +83,44 @@ Do these steps as root on the VM, unless the step says "on your computer".
 
    On GitHub, the runners show in Settings → Actions → Runners.
 
+7. Install the weekly prune. Each image rebuild leaves an old image, build cache and the volumes of the replaced containers, and the shared caches grow. The prune waits up to 30 minutes for running jobs, then stops the runners for about one minute. Cron runs it on Sunday morning. On the first Sunday of each month, it also clears the pip and yarn caches:
+
+   ```sh
+   install -m 755 /opt/runner/prune.sh /etc/cron.weekly/runner-prune
+   ```
+
 The token expires after one hour. A runner uses the token only when it registers. The containers restart after a reboot and do not register again.
 
 ## Update the image
 
-Do this when you change the `Dockerfile` or the scripts. New containers register again, so you need a new token.
+Do this when you change the `Dockerfile` or the scripts. Running jobs continue during the update.
 
-1. Make sure that no runner is busy. On your computer:
-
-   ```sh
-   gh api repos/frappe/press/actions/runners -q '.runners[] | "\(.name) busy=\(.busy)"'
-   ```
-
-2. Copy the changed files to `/opt/runner` on the VM.
-3. Get a new token, and put it in `.env` (Install, steps 3 and 4).
-4. Replace the runners:
+1. Copy the changed files to `/opt/runner` on the VM.
+2. Build the new image on the VM:
 
    ```sh
    cd /opt/runner
    docker compose build
-   docker compose down
-   docker compose up -d --scale runner=6
    ```
 
-5. Remove the old runners of this VM from GitHub. If you do not remove them, GitHub shows them as offline for 14 days. On your computer, set `P` to the `RUNNER_PREFIX` of the VM:
+3. On your computer, replace the runners. Give the SSH destination of the VM, its `RUNNER_PREFIX`, and the number of runners:
 
    ```sh
-   P=vm101
-   gh api repos/frappe/press/actions/runners \
-     -q ".runners[] | select(.status==\"offline\" and (.name|startswith(\"$P-\"))) | .id" |
-     while read -r id; do gh api -X DELETE "repos/frappe/press/actions/runners/$id"; done
+   .github/runner/rolling.sh root@<vm> vm101 6
    ```
+
+   For each container that uses an old image, the script waits until the runner is idle. Then it deletes the runner on GitHub, writes a new token to `.env`, and starts a new container in its place. When a job is long, the script waits for it.
+
+## Remove offline runners from GitHub
+
+GitHub shows a removed runner as offline for 14 days. To remove the offline runners of a VM, set `P` to the `RUNNER_PREFIX` of the VM. On your computer:
+
+```sh
+P=vm101
+gh api repos/frappe/press/actions/runners \
+  -q ".runners[] | select(.status==\"offline\" and (.name|startswith(\"$P-\"))) | .id" |
+  while read -r id; do gh api -X DELETE "repos/frappe/press/actions/runners/$id"; done
+```
 
 ## Change the number of runners
 
@@ -119,16 +130,16 @@ To add runners, put a new token in `.env`. Then start more containers, and keep 
 docker compose up -d --no-recreate --scale runner=8
 ```
 
-To remove runners, set a lower number. Then remove the offline runners from GitHub (Update the image, step 5).
+To remove runners, set a lower number. Then remove the offline runners from GitHub (see Remove offline runners from GitHub).
 
 ## Remove the runners
 
 ```sh
 cd /opt/runner
-docker compose down
+docker compose down -v
 ```
 
-Then remove the offline runners from GitHub (Update the image, step 5).
+Then remove the offline runners from GitHub (see Remove offline runners from GitHub).
 
 ## Troubleshooting
 
