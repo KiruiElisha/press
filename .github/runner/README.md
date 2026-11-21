@@ -10,7 +10,7 @@ The image is `ghcr.io/actions/actions-runner` (Ubuntu 24.04), plus the tools tha
 
 GitHub-hosted runners give each job a new VM. Here, a container runs many jobs. Before each job, `cleanup.sh` stops the processes and removes the containers, `~/frappe-bench` and `/data` that the previous job left.
 
-Self-hosted jobs do not use GitHub's cache. All runners on the VM share the pip and yarn caches in `/opt/runner-cache/pip` and `/opt/runner-cache/yarn`. The Install step of Setup Bench holds a file lock (`flock /cache/yarn/.lock`), so two installs do not write the yarn cache at the same time. Do not use yarn's own `--mutex`: the press postinstall runs yarn inside yarn, and the inner yarn waits forever for its parent's lock. Setup Bench copies the bench and the MariaDB data to `/opt/runner-cache/runs/<run id>` on the VM, and the Client and Server jobs copy them from there. `cleanup.sh` removes runs older than one day. Each run uses some GB of disk. This works only while all runners are on one VM.
+Self-hosted jobs do not use GitHub's cache. All runners on the VM share the pip and yarn caches in `/opt/runner-cache/pip` and `/opt/runner-cache/yarn`. The Install step of Setup Bench holds a file lock (`flock /cache/yarn/.lock`), so two installs do not write the yarn cache at the same time. Do not use yarn's own `--mutex`: the press postinstall runs yarn inside yarn, and the inner yarn waits forever for its parent's lock. Setup Bench copies the bench and the MariaDB data to `/opt/runner-cache/runs/<run id>` on the VM. The Client and Server jobs copy the MariaDB data from there. They mount the bench with overlayfs (`.github/helper/mount-bench.sh`), so the saved bench stays read-only and each job writes its changes to an `overlay.*` directory next to it. `cleanup.sh` removes runs older than one day. Each run uses some GB of disk. This works only while all runners are on one VM.
 
 The repository variable `SELF_HOSTED_RUNNERS` selects the runners for every workflow in `.github/workflows/`:
 
@@ -103,11 +103,22 @@ Do this when you change the `Dockerfile` or the scripts. Running jobs continue d
    docker compose build
    ```
 
-3. On your computer, replace the runners. Give the SSH destination of the VM, its `RUNNER_PREFIX`, and the number of runners:
+3. On your computer, replace the runners. Give the SSH destination of the VM and its `RUNNER_PREFIX`. The script keeps the number of runners that run on the VM now. To change the number, give it as the third argument:
 
    ```sh
-   .github/runner/rolling.sh root@<vm> vm101 6
+   .github/runner/rolling.sh root@<vm> vm101
    ```
+
+   If you reach the VM through a jump host, put the jump host in `~/.ssh/config`, because the script gives `ssh` only the destination:
+
+   ```
+   Host runner-vm101
+       HostName <vm>
+       User root
+       ProxyJump root@<jump host>
+   ```
+
+   Then use `runner-vm101` as the SSH destination.
 
    For each container that uses an old image, the script waits until the runner is idle. Then it deletes the runner on GitHub, writes a new token to `.env`, and starts a new container in its place. When a job is long, the script waits for it.
 
@@ -152,3 +163,18 @@ Then remove the offline runners from GitHub (see Remove offline runners from Git
   ```
 
 - **Registration fails.** The token expired. Get a new token, put it in `.env`, and start the runners again.
+- **rolling.sh stops with an SSH error.** The connection to the VM dropped. Run the script again. It continues with the runners that still use the old image.
+- **rolling.sh does not replace a runner.** GitHub does not delete a runner while it runs a job. The API returns HTTP 422 ("is currently running a job and cannot be deleted"). The script tries again on each pass and replaces the runner when it is idle. Do not remove the container by hand, because that stops the job.
+- **Every job on a runner fails in "Set up runner" with `Device or resource busy`.** An earlier job left a mount at `~/frappe-bench`, and `cleanup.sh` cannot remove a mount point. The Client and Server jobs mount the bench with `.github/helper/mount-bench.sh`. They unmount it in their last step, and `cleanup.sh` unmounts it before the next job. A runner on an image older than that `cleanup.sh` keeps the mount. To find the runners with a mount:
+
+  ```sh
+  cd /opt/runner && for c in $(docker compose ps -q); do echo "$(docker inspect -f '{{.Name}}' $c) $(docker exec $c grep -c ' /home/runner/frappe-bench overlay' /proc/mounts)"; done
+  ```
+
+  To remove the mounts, run this on the VM. Running jobs continue:
+
+  ```sh
+  cd /opt/runner && for c in $(docker compose ps -q); do docker exec "$c" sh -c 'umount --lazy /home/runner/frappe-bench 2>/dev/null; true'; done
+  ```
+
+  Then update the image, so that `cleanup.sh` unmounts the bench.
