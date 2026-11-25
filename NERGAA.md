@@ -28,7 +28,8 @@ This fork runs Nergaa Cloud (https://cloud.nergaa.cloud). Branches:
    and Press kept only the access token, so every 8 hours the dashboard asked to re-authorize GitHub.
    The refresh token GitHub sends with it is now kept (encrypted in `__Auth`, no Team column), and a
    refused token is renewed with it before falling back to "Re-authorize". Drop once Frappe keeps refresh
-   tokens.
+   tokens. Only Press's team-token path needs it: for a team with Frappe's GitHub Installation linking
+   (`is_enabled_for_team`), Frappe's flow is left as it is.
 
 5. `press/press/doctype/agent_job/agent_job.py` — `cancel_job_from_dashboard` passes `job.site or ""` to
    `has_support_access`, which takes a `str`. mypy (follow_imports = skip) only sees that signature when both
