@@ -36,6 +36,11 @@ This fork runs Nergaa Cloud (https://cloud.nergaa.cloud). Branches:
    files change in one PR, and a sync does, so "Format & Type Check" failed. The empty name takes the same path
    as `None`. Drop once Frappe types it.
 
+6. `press/press/doctype/app_source/app_source.py` — `commit_hash: None | str` written as `str | None` in
+   `get_commit_info` and `poll_github`. CI's lint installs the newest ruff, and ruff 0.17.6 added RUF036 ("None
+   not at the end of the type union"), so "Check for Changes and Lint" failed on a sync that touched the file and
+   the server tests behind it never ran. Same type, no behaviour change. Drop once Frappe reorders it.
+
 Fixes that still live as runtime patches in nergaa-cloud (`apps/nergaa_cloud/nergaa_cloud/press_fixes.py`) move
 here one by one; the patches check whether Press already has the fix, so both can run during the move.
 
