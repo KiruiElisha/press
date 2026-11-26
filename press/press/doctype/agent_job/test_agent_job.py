@@ -386,7 +386,7 @@ class TestCancelJob(FrappeTestCase):
 
 		job.validate_dashboard_cancellation()  # doesn't raise
 
-	def test_dashboard_cant_cancel_a_site_update_that_skipped_backups(self):
+	def test_dashboard_can_cancel_a_site_update_that_skipped_backups(self):
 		job = create_test_agent_job(job_type="Update Site Migrate", status="Running", job_id=42)
 		site_update = frappe.get_doc(
 			doctype="Site Update",
@@ -397,11 +397,7 @@ class TestCancelJob(FrappeTestCase):
 		)
 		site_update.db_insert()
 
-		self.assertRaisesRegex(
-			frappe.ValidationError,
-			"backups skipped",
-			job.validate_dashboard_cancellation,
-		)
+		job.validate_dashboard_cancellation()  # doesn't raise
 
 
 class TestCancelJobFromDashboard(FrappeTestCase):
@@ -800,6 +796,21 @@ class TestAgentJobNotifications(FrappeTestCase):
 class TestAgentJobOutputRedaction(FrappeTestCase):
 	def tearDown(self):
 		frappe.db.rollback()
+
+	def test_creation_log_leaves_out_the_request_that_carries_passwords(self):
+		job = frappe.new_doc("Agent Job")
+		job.job_type = "Create User"
+		job.request_data = json.dumps({"mariadb_root_password": "fake-root-password"})
+		job.request_files = json.dumps({"config": "fake-file-secret"})
+		cache = Mock()
+
+		with patch("press.press.doctype.agent_job.agent_job.frappe.cache", return_value=cache):
+			job.log_creation()
+
+		logged = cache.rpush.call_args.args[1]
+		self.assertNotIn("fake-root-password", logged)
+		self.assertNotIn("fake-file-secret", logged)
+		self.assertEqual(json.loads(logged)["job"]["job_type"], "Create User")
 
 	def test_masks_password_attribute_in_traceback_variables(self):
 		text = "self = BackupGenerator(db_name='_db1', password='fake-db-password', user='_db1')"

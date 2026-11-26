@@ -95,6 +95,7 @@ from press.press.doctype.site_activity.site_activity import log_site_activity
 from press.press.doctype.site_analytics.site_analytics import create_site_analytics
 from press.press.doctype.site_config.site_config import (
 	decode_json_config_value,
+	decode_number_config_value,
 	parse_json_config_value,
 )
 from press.press.doctype.site_plan.site_plan import get_plan_config
@@ -1014,7 +1015,7 @@ class Site(Document, TagHelpers):
 			row.type = key_type
 
 			if key_type == "Number":
-				key_value = int(row.value) if isinstance(row.value, float | int) else json.loads(row.value)
+				key_value = decode_number_config_value(row.value)
 			elif key_type == "Boolean":
 				key_value = (
 					row.value if isinstance(row.value, bool) else bool(sbool(json.loads(cstr(row.value))))
@@ -3392,6 +3393,15 @@ class Site(Document, TagHelpers):
 		self.update_site_status_on_proxy("activated")
 		self.reactivate_app_subscriptions()
 
+	def activate_after_restore(self):
+		"""A restore marks the site Active, so also remove the hold of a deactivated site."""
+		# Support can restore a suspended site, which must stay suspended
+		if self.suspended_at or not self.get_config_value_for_key("maintenance_mode"):
+			return
+		log_site_activity(self.name, "Activate Site", "Restore")
+		self.update_site_config({"maintenance_mode": 0})
+		self.update_site_status_on_proxy("activated")
+
 	@frappe.whitelist()
 	def suspend(self, reason=None, skip_reload=False):
 		log_site_activity(self.name, "Suspend Site", reason)
@@ -5586,6 +5596,7 @@ def process_restore_job_update(job, force=False):
 			site.db_set("creation_failed", None)
 			site.db_set("fatal_site_update", None)
 			site.db_set("database_name", None)
+			site.activate_after_restore()
 
 		elif job.status == "Failure":
 			frappe.db.set_value("Site", job.site, "creation_failed", frappe.utils.now())
